@@ -34,6 +34,11 @@ def liquidar(emp):
     sec                  = emp.get("sec", 0)
     faecys               = emp.get("faecys", 0)
 
+    if emp.get("fuera_convenio", False):
+        osecac = 0
+        sec    = 0
+        faecys = 0
+
     base_rem = basico_prop + feriado_no_trabajado + antiguedad + presentismo + a_cuenta
     base_os  = base_rem + asig_no_rem + antiguedad_s_acuerdo + presentismo_s_acuerdo \
                if emp.get("os_sobre_nr", False) else base_rem
