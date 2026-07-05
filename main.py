@@ -174,10 +174,21 @@ async def liquidar_endpoint(request: Request):
                 return float(val) if pd.notna(val) and val != "" else default
             
             dias_trab = 29 if safe(row.iloc[7]) < safe(row.iloc[6]) and safe(row.iloc[6]) > 0 else 30
-            
+
+            cuil_raw = row.iloc[54] if len(row) > 54 else None
+            cuil = str(cuil_raw).replace("-", "").strip() if pd.notna(cuil_raw) else ""
+
+            fecha_ingreso_raw = row.iloc[55] if len(row) > 55 else None
+            if hasattr(fecha_ingreso_raw, "strftime"):
+                fecha_ingreso = fecha_ingreso_raw.strftime("%d/%m/%Y")
+            else:
+                fecha_ingreso = str(fecha_ingreso_raw) if pd.notna(fecha_ingreso_raw) else ""
+
             empleados_raw.append({
                 "nombre"               : str(nombre),
                 "categoria"            : str(row.iloc[1]) if pd.notna(row.iloc[1]) else "",
+                "cuil"                 : cuil,
+                "fecha_ingreso"        : fecha_ingreso,
                 "basico_mensual"       : safe(row.iloc[6]),
                 "dias_trabajados"      : dias_trab,
                 "dias_feriado"         : 1 if safe(row.iloc[8]) > 0 else 0,

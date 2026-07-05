@@ -61,7 +61,16 @@ def liquidar(emp):
 
 def generar_txt(empleados, periodo):
     cant = str(len(empleados)).zfill(6)
-    fecha_pago = f"20{periodo[2:4]}{periodo[4:6]}01" if len(periodo) == 6 else "20251201"
+    if len(periodo) == 6:
+        anio_periodo = int(periodo[0:4])
+        mes_periodo  = int(periodo[4:6])
+        if mes_periodo == 12:
+            anio_pago, mes_pago = anio_periodo + 1, 1
+        else:
+            anio_pago, mes_pago = anio_periodo, mes_periodo + 1
+        fecha_pago = f"{anio_pago}{mes_pago:02d}01"
+    else:
+        fecha_pago = "20251201"
     
     reg1 = f"01{CUIT_EMPRESA}SJ{periodo}M0000330{cant}"
     lineas = [reg1]
