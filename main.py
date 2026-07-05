@@ -29,6 +29,9 @@ def save_token(token_data: dict):
         json.dump(token_data, f)
 
 def load_token() -> dict | None:
+    env_refresh_token = os.environ.get("GMAIL_REFRESH_TOKEN")
+    if env_refresh_token:
+        return {"refresh_token": env_refresh_token}
     try:
         with open(TOKEN_FILE) as f:
             return json.load(f)
@@ -92,7 +95,19 @@ async def auth_callback(code: str):
         raise HTTPException(400, f"No se obtuvo refresh_token: {token_data}")
     
     save_token(token_data)
-    return {"ok": True, "mensaje": "Gmail autorizado correctamente. Ya podés usar /liquidar."}
+    ya_persistido = bool(os.environ.get("GMAIL_REFRESH_TOKEN"))
+    return {
+        "ok": True,
+        "mensaje": "Gmail autorizado correctamente. Ya podés usar /liquidar.",
+        "refresh_token": token_data["refresh_token"],
+        "accion_requerida": (
+            "Ya está configurada la variable GMAIL_REFRESH_TOKEN en Railway — no hace falta nada más."
+            if ya_persistido else
+            "IMPORTANTE: copiá el valor de 'refresh_token' de esta respuesta y creá la variable de "
+            "entorno GMAIL_REFRESH_TOKEN en Railway (Variables → New Variable) con ese valor. "
+            "Sin esto, cada redeploy va a volver a pedir autorización."
+        ),
+    }
 
 # ─── Endpoint principal ─────────────────────────────────────
 @app.post("/liquidar")
