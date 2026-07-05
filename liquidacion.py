@@ -39,9 +39,9 @@ def liquidar(emp):
                if emp.get("os_sobre_nr", False) else base_rem
     bruto    = base_rem + asig_no_rem + antiguedad_s_acuerdo + presentismo_s_acuerdo
 
-    jubilacion  = base_rem * 0.11
-    pami        = base_rem * 0.03
-    obra_social = base_os  * 0.03
+    jubilacion  = 0 if emp.get("fuera_convenio", False) else base_rem * 0.11
+    pami        = 0 if emp.get("fuera_convenio", False) else base_rem * 0.03
+    obra_social = 0 if emp.get("fuera_convenio", False) else base_os  * 0.03
     total_desc  = jubilacion + pami + obra_social + osecac + sec + faecys
 
     neto_exacto = bruto - total_desc

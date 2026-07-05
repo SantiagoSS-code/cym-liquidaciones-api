@@ -199,9 +199,13 @@ async def liquidar_endpoint(request: Request):
             else:
                 fecha_ingreso = str(fecha_ingreso_raw) if pd.notna(fecha_ingreso_raw) else ""
 
+            categoria_txt = str(row.iloc[1]) if pd.notna(row.iloc[1]) else ""
+            fuera_convenio = "FUERA" in categoria_txt.upper()
+
             empleados_raw.append({
                 "nombre"               : str(nombre),
-                "categoria"            : str(row.iloc[1]) if pd.notna(row.iloc[1]) else "",
+                "categoria"            : categoria_txt,
+                "fuera_convenio"       : fuera_convenio,
                 "cuil"                 : cuil,
                 "fecha_ingreso"        : fecha_ingreso,
                 "basico_mensual"       : safe(row.iloc[6]),
