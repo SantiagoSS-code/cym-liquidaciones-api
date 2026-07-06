@@ -17,6 +17,13 @@ BANCO        = "GALICIA"
 def fmt_monto(n):
     return f"{abs(n):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
+def fmt_cuil(cuil_digits):
+    """Formatea un CUIL de 11 dígitos sin guiones como XX-XXXXXXXX-X."""
+    d = str(cuil_digits or "")
+    if len(d) != 11:
+        return d
+    return f"{d[0:2]}-{d[2:10]}-{d[10]}"
+
 def liquidar(emp):
     bm   = emp["basico_mensual"]
     dias = emp.get("dias_trabajados", 30)
@@ -130,7 +137,7 @@ def generar_pdf(empleados, netos, periodo):
         txt(MR-60*mm, y, "Direccion:", bold=True); txt(MR-45*mm, y, DIRECCION)
         y -= 5*mm; linea(y); y -= 4*mm
         txt(ML, y, f"Nro C.U.I.T. Empresa:{CUIT_EMPRESA}")
-        txt(W/2, y, f"Nro C.U.I.L. Empleado: {emp.get('cuil_fmt','')}")
+        txt(W/2, y, f"Nro C.U.I.L. Empleado: {fmt_cuil(emp.get('cuil',''))}")
         y -= 4*mm
         txt(ML, y, "Apellido y Nombre", bold=True)
         txt(MR-40*mm, y, "Legajo Nro", bold=True)
@@ -169,7 +176,39 @@ def generar_pdf(empleados, netos, periodo):
             if ret:   txt(MR, y, ret, 6, align="right")
             y -= 3.8*mm
 
-        for concepto in emp.get("conceptos", []):
+        conceptos = []
+        conceptos.append({"cod":"0001", "concepto":"SUELDO BASICO",
+                           "unid":f"{emp.get('dias_trabajados',30):.2f}", "apor":fmt_monto(r["basico_prop"])})
+        if emp.get("dias_feriado", 0) > 0:
+            conceptos.append({"cod":"0271", "concepto":"FERIADO NO TRABAJADO",
+                               "unid":f"{emp.get('dias_feriado',0):.2f}", "apor":fmt_monto(r["feriado_no_trabajado"])})
+        if r["antiguedad"] > 0:
+            conceptos.append({"cod":"0038", "concepto":"ANTIGUEDAD", "apor":fmt_monto(r["antiguedad"])})
+        if r["presentismo"] > 0:
+            conceptos.append({"cod":"0039", "concepto":"PRESENTISMO", "apor":fmt_monto(r["presentismo"])})
+        if r["a_cuenta"] > 0:
+            conceptos.append({"cod":"0182", "concepto":"A CTA. FUTUROS AUMENTOS", "apor":fmt_monto(r["a_cuenta"])})
+        if r["asig_no_rem"] > 0:
+            conceptos.append({"cod":"0369", "concepto":"ASIG. NO REMUNERATIVA", "exent":fmt_monto(r["asig_no_rem"])})
+        if r["antiguedad_s_acuerdo"] > 0:
+            conceptos.append({"cod":"0618", "concepto":"ANTIGUEDAD S/ ACUERDO", "exent":fmt_monto(r["antiguedad_s_acuerdo"])})
+        if r["presentismo_s_acuerdo"] > 0:
+            conceptos.append({"cod":"0608", "concepto":"PRESENTISMO S/ ACUERDOS", "exent":fmt_monto(r["presentismo_s_acuerdo"])})
+        if r["jubilacion"] > 0:
+            conceptos.append({"cod":"1001", "concepto":"JUBILACION", "ret":fmt_monto(r["jubilacion"])})
+        if r["pami"] > 0:
+            conceptos.append({"cod":"1002", "concepto":"LEY 19032", "ret":fmt_monto(r["pami"])})
+        if r["obra_social"] > 0:
+            conceptos.append({"cod":"1025", "concepto":"OBRA SOCIAL", "ret":fmt_monto(r["obra_social"])})
+        if r["osecac"] > 0:
+            conceptos.append({"cod":"1026", "concepto":"APORTE OSECAC SEGUN ACUERDO", "ret":fmt_monto(r["osecac"])})
+        if r["sec"] > 0:
+            conceptos.append({"cod":"1106", "concepto":"SEC", "ret":fmt_monto(r["sec"])})
+        if r["faecys"] > 0:
+            conceptos.append({"cod":"1107", "concepto":"FAECYS", "ret":fmt_monto(r["faecys"])})
+        conceptos.append({"cod":"2009", "concepto":"REDONDEO", "ret":fmt_monto(r["redondeo"])})
+
+        for concepto in conceptos:
             fila(**concepto)
 
         y -= 2*mm; linea(y); y -= 4*mm

@@ -199,6 +199,18 @@ async def liquidar_endpoint(request: Request):
             else:
                 fecha_ingreso = str(fecha_ingreso_raw) if pd.notna(fecha_ingreso_raw) else ""
 
+            obra_social_raw = row.iloc[57] if len(row) > 57 else None
+            obra_social_cod = str(obra_social_raw).strip() if pd.notna(obra_social_raw) else ""
+
+            # TODO: el Excel de novedades no trae legajo — hasta que ese dato tenga
+            # una fuente real (padrón/CRM), se resuelve por CUIL con esta tabla fija.
+            LEGAJOS_TV_CRECER = {
+                "20186092555": "005001",
+                "20359670452": "005011",
+                "20398771940": "005013",
+            }
+            legajo = LEGAJOS_TV_CRECER.get(cuil, "")
+
             categoria_txt = str(row.iloc[1]) if pd.notna(row.iloc[1]) else ""
             fuera_convenio = "FUERA" in categoria_txt.upper()
 
@@ -207,7 +219,9 @@ async def liquidar_endpoint(request: Request):
                 "categoria"            : categoria_txt,
                 "fuera_convenio"       : fuera_convenio,
                 "cuil"                 : cuil,
+                "legajo"               : legajo,
                 "fecha_ingreso"        : fecha_ingreso,
+                "obra_social_cod"      : obra_social_cod,
                 "basico_mensual"       : safe(row.iloc[6]),
                 "dias_trabajados"      : dias_trab,
                 "dias_feriado"         : 1 if safe(row.iloc[8]) > 0 else 0,
