@@ -42,7 +42,7 @@ async def get_access_token() -> str:
     token = load_token()
     if not token:
         raise HTTPException(401, "No hay token. Visitá /auth/login para autorizar.")
-    
+
     # Refrescar si expiró
     async with httpx.AsyncClient() as client:
         r = await client.post("https://oauth2.googleapis.com/token", data={
@@ -90,10 +90,10 @@ async def auth_callback(code: str):
             "grant_type"    : "authorization_code",
         })
         token_data = r.json()
-    
+
     if "refresh_token" not in token_data:
         raise HTTPException(400, f"No se obtuvo refresh_token: {token_data}")
-    
+
     save_token(token_data)
     ya_persistido = bool(os.environ.get("GMAIL_REFRESH_TOKEN"))
     return {
@@ -109,18 +109,63 @@ async def auth_callback(code: str):
         ),
     }
 
+def armar_respuesta(empleados_raw: list, periodo: str) -> dict:
+    """Calcula liquidaciones y genera TXT+PDF. Compartido por /liquidar y /liquidar-texto-libre."""
+    resultados = []
+    netos = []
+    for emp in empleados_raw:
+        r = liquidar(emp)
+        netos.append(r["neto"])
+        resultados.append({
+            "nombre"    : emp["nombre"],
+            "categoria" : emp["categoria"],
+            "neto"      : r["neto"],
+            "base_rem"  : round(r["base_rem"], 2),
+            "total_desc": round(r["total_desc"], 2),
+        })
+
+    txt_content = generar_txt(empleados_raw, periodo)
+    txt_b64 = base64.b64encode(txt_content.encode()).decode()
+
+    pdf_bytes = generar_pdf(empleados_raw, netos, periodo)
+    pdf_b64 = base64.b64encode(pdf_bytes).decode()
+
+    return {
+        "ok"        : True,
+        "periodo"   : periodo,
+        "empleados" : resultados,
+        "total_neto": sum(netos),
+        "archivos"  : {
+            "pdf_filename": f"TV_CRECER_RECIBOS_{periodo}.pdf",
+            "pdf_b64"     : pdf_b64,
+            "txt_filename": f"TV_CRECER_LSD_{periodo}.txt",
+            "txt_b64"     : txt_b64,
+        }
+    }
+
+# Campos opcionales con su valor por defecto — usado para completar lo que
+# falte cuando los empleados llegan armados a mano (endpoint de texto libre)
+DEFAULTS_EMPLEADO = {
+    "categoria": "", "fuera_convenio": False, "cuil": "", "legajo": "",
+    "fecha_ingreso": "", "obra_social_cod": "", "dias_trabajados": 30,
+    "dias_feriado": 0, "antiguedad_monto": 0, "presentismo": 0,
+    "a_cuenta_aumentos": 0, "asig_no_rem": 0, "antiguedad_s_acuerdo": 0,
+    "presentismo_s_acuerdo": 0, "osecac": 0, "sec": 0, "faecys": 0,
+    "os_sobre_nr": False,
+}
+
 # ─── Endpoint principal ─────────────────────────────────────
 @app.post("/liquidar")
 async def liquidar_endpoint(request: Request):
     body = await request.json()
     message_id = body.get("message_id")
-    
+
     if not message_id:
         raise HTTPException(400, "Se requiere message_id")
-    
+
     access_token = await get_access_token()
     headers = {"Authorization": f"Bearer {access_token}"}
-    
+
     async with httpx.AsyncClient() as client:
         # 1. Obtener mensaje completo
         r = await client.get(
@@ -128,11 +173,11 @@ async def liquidar_endpoint(request: Request):
             headers=headers
         )
         msg = r.json()
-        
+
         # 2. Encontrar el adjunto Excel
         attachment_id = None
         filename = None
-        
+
         def find_attachment(parts):
             nonlocal attachment_id, filename
             for part in parts:
@@ -142,33 +187,33 @@ async def liquidar_endpoint(request: Request):
                     return
                 if part.get("parts"):
                     find_attachment(part["parts"])
-        
+
         payload_parts = msg.get("payload", {}).get("parts", [])
         find_attachment(payload_parts)
-        
+
         if not attachment_id:
             raise HTTPException(400, "No se encontró adjunto Excel en el mensaje")
-        
+
         # 3. Descargar adjunto
         r2 = await client.get(
             f"https://gmail.googleapis.com/gmail/v1/users/me/messages/{message_id}/attachments/{attachment_id}",
             headers=headers
         )
         att_data = r2.json()
-        
+
         # Gmail usa base64url → convertir a base64 standard
         b64 = att_data["data"].replace("-", "+").replace("_", "/")
         file_bytes = base64.b64decode(b64)
-    
+
     # 4. Procesar Excel
     try:
         engine = "xlrd" if filename.endswith(".xls") else "openpyxl"
         xls = pd.ExcelFile(io.BytesIO(file_bytes), engine=engine)
         hojas = [h for h in xls.sheet_names if "control" not in h.lower() and "solo" not in h.lower()]
         hoja_activa = hojas[0]
-        
+
         df = pd.read_excel(io.BytesIO(file_bytes), sheet_name=hoja_activa, header=None, engine=engine)
-        
+
         # Extraer período
         periodo_raw = df.iloc[4, 0]
         if hasattr(periodo_raw, "month"):
@@ -176,7 +221,7 @@ async def liquidar_endpoint(request: Request):
         else:
             partes = str(periodo_raw).split("/")
             periodo = f"20{partes[1]}{partes[0].zfill(2)}"
-        
+
         # Extraer empleados
         empleados_raw = []
         for i in range(10, 20):
@@ -184,10 +229,10 @@ async def liquidar_endpoint(request: Request):
             row = df.iloc[i]
             nombre = row.iloc[0]
             if pd.isna(nombre) or str(nombre).upper().startswith("TOTAL"): break
-            
+
             def safe(val, default=0):
                 return float(val) if pd.notna(val) and val != "" else default
-            
+
             dias_trab = 29 if safe(row.iloc[7]) < safe(row.iloc[6]) and safe(row.iloc[6]) > 0 else 30
 
             cuil_raw = row.iloc[54] if len(row) > 54 else None
@@ -236,40 +281,48 @@ async def liquidar_endpoint(request: Request):
                 "faecys"               : safe(row.iloc[29]),
                 "os_sobre_nr"          : safe(row.iloc[44]) > 0,
             })
-        
-        # 5. Calcular liquidaciones
-        resultados = []
-        netos = []
-        for emp in empleados_raw:
-            r = liquidar(emp)
-            netos.append(r["neto"])
-            resultados.append({
-                "nombre"    : emp["nombre"],
-                "categoria" : emp["categoria"],
-                "neto"      : r["neto"],
-                "base_rem"  : round(r["base_rem"], 2),
-                "total_desc": round(r["total_desc"], 2),
-            })
-        
-        # 6. Generar TXT y PDF
-        txt_content = generar_txt(empleados_raw, periodo)
-        txt_b64 = base64.b64encode(txt_content.encode()).decode()
-        
-        pdf_bytes = generar_pdf(empleados_raw, netos, periodo)
-        pdf_b64 = base64.b64encode(pdf_bytes).decode()
-        
-        return JSONResponse({
-            "ok"        : True,
-            "periodo"   : periodo,
-            "empleados" : resultados,
-            "total_neto": sum(netos),
-            "archivos"  : {
-                "pdf_filename": f"TV_CRECER_RECIBOS_{periodo}.pdf",
-                "pdf_b64"     : pdf_b64,
-                "txt_filename": f"TV_CRECER_LSD_{periodo}.txt",
-                "txt_b64"     : txt_b64,
-            }
-        })
-    
+
+        # 5. Calcular liquidaciones y generar TXT + PDF
+        return JSONResponse(armar_respuesta(empleados_raw, periodo))
+
     except Exception as e:
         raise HTTPException(500, f"Error procesando Excel: {str(e)}")
+
+# ─── Endpoint para novedades sin Excel (texto libre) ────────
+@app.post("/liquidar-texto-libre")
+async def liquidar_texto_libre(request: Request):
+    """
+    Recibe novedades ya estructuradas en JSON (parseadas previamente por
+    Claude a partir del texto libre del mail) y corre el mismo cálculo y
+    generación de PDF/TXT que /liquidar, sin pasar por un Excel.
+
+    Body esperado:
+    {
+      "periodo": "202511",
+      "empleados": [
+        {
+          "nombre": "...", "basico_mensual": 1000000,
+          ... (el resto de los campos es opcional, se completan con default)
+        }
+      ]
+    }
+    """
+    body = await request.json()
+    periodo = body.get("periodo")
+    empleados_in = body.get("empleados")
+
+    if not periodo or not empleados_in:
+        raise HTTPException(400, "Se requiere 'periodo' y 'empleados' (lista no vacía)")
+
+    empleados_raw = []
+    for emp_in in empleados_in:
+        if "nombre" not in emp_in or "basico_mensual" not in emp_in:
+            raise HTTPException(400, f"Cada empleado requiere al menos 'nombre' y 'basico_mensual': {emp_in}")
+        emp = {**DEFAULTS_EMPLEADO, **emp_in}
+        emp["cuil"] = str(emp.get("cuil", "")).replace("-", "").strip()
+        empleados_raw.append(emp)
+
+    try:
+        return JSONResponse(armar_respuesta(empleados_raw, periodo))
+    except Exception as e:
+        raise HTTPException(500, f"Error generando liquidación desde texto libre: {str(e)}")
