@@ -1,6 +1,7 @@
 """
 Motor de liquidación + generadores de TXT y PDF
 """
+import calendar
 import math
 import base64
 import io
@@ -71,37 +72,44 @@ def liquidar(emp):
         "total_desc": total_desc, "redondeo": redondeo, "neto": neto,
     }
 
-def generar_txt(empleados, periodo):
+def generar_txt(empleados, periodo, nro_liquidacion="00001"):
     cant = str(len(empleados)).zfill(6)
+
     if len(periodo) == 6:
         anio_periodo = int(periodo[0:4])
         mes_periodo  = int(periodo[4:6])
+
+        dias_base = str(calendar.monthrange(anio_periodo, mes_periodo)[1]).zfill(2)
+
         if mes_periodo == 12:
             anio_pago, mes_pago = anio_periodo + 1, 1
         else:
             anio_pago, mes_pago = anio_periodo, mes_periodo + 1
         fecha_pago = f"{anio_pago}{mes_pago:02d}01"
     else:
+        dias_base  = "30"
         fecha_pago = "20251201"
-    
-    reg1 = f"01{CUIT_EMPRESA}SJ{periodo}M0000330{cant}"
+
+    nro_liq = str(nro_liquidacion).zfill(5)[:5]
+
+    reg1 = f"01{CUIT_EMPRESA}SJ{periodo}M{nro_liq}{dias_base}{cant}"
     lineas = [reg1]
-    
+
     for emp in empleados:
-        cuil = emp.get("cuil", "").replace("-", "").replace(" ", "").ljust(11)[:11]
+        cuil        = emp.get("cuil", "").replace("-", "").replace(" ", "").ljust(11)[:11]
+        legajo      = str(emp.get("legajo", "")).ljust(10)[:10]
+        dependencia = str(emp.get("dependencia", "")).ljust(50)[:50]
+        cbu         = str(emp.get("cbu", "")).ljust(22)[:22]
+
         reg2 = (
-            "02" + cuil +
-            " " * 5 +   # legajo
-            " " * 5 +   # dependencia
-            " " * 22 +  # CBU
-            " " * 50 +  # reservado
-            "000" +     # dias prop
+            "02" + cuil + legajo + dependencia + cbu +
+            "000" +
             fecha_pago +
-            " " * 8 +   # rubrica
-            "1"         # forma pago
+            " " * 8 +
+            "1"
         )
         lineas.append(reg2)
-    
+
     return "\r\n".join(lineas)
 
 def generar_pdf(empleados, netos, periodo):
@@ -119,7 +127,13 @@ def generar_pdf(empleados, netos, periodo):
     mm_str = periodo[4:6] if len(periodo) == 6 else "11"
     aa_str = periodo[2:4] if len(periodo) == 6 else "25"
     periodo_txt = f"{mes_nombre.get(mm_str,'?')} 20{aa_str}"
-    fecha_pago  = f"1/{int(mm_str)+1 if int(mm_str)<12 else 1}/20{aa_str}"
+    mes_num = int(mm_str)
+    anio_num = 2000 + int(aa_str)
+    if mes_num == 12:
+        mes_pago_num, anio_pago_num = 1, anio_num + 1
+    else:
+        mes_pago_num, anio_pago_num = mes_num + 1, anio_num
+    fecha_pago = f"1/{mes_pago_num}/{anio_pago_num}"
 
     def txt(x, y, texto, size=7, bold=False, align="left"):
         c.setFont("Helvetica-Bold" if bold else "Helvetica", size)
