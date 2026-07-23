@@ -9,12 +9,6 @@ from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 from reportlab.lib.units import mm
 
-# ─────────────────────────────────────────────
-CUIT_EMPRESA = "30709066729"
-EMPRESA      = "TV CRECER S.R.L."
-DIRECCION    = "ESCALADA 1200"
-BANCO        = "GALICIA"
-
 def fmt_monto(n):
     return f"{abs(n):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
@@ -72,7 +66,7 @@ def liquidar(emp):
         "total_desc": total_desc, "redondeo": redondeo, "neto": neto,
     }
 
-def generar_txt(empleados, periodo, nro_liquidacion="00001"):
+def generar_txt(empleados, periodo, empresa_config, nro_liquidacion="00001"):
     cant = str(len(empleados)).zfill(6)
 
     if len(periodo) == 6:
@@ -92,7 +86,7 @@ def generar_txt(empleados, periodo, nro_liquidacion="00001"):
 
     nro_liq = str(nro_liquidacion).zfill(5)[:5]
 
-    reg1 = f"01{CUIT_EMPRESA}SJ{periodo}M{nro_liq}{dias_base}{cant}"
+    reg1 = f"01{empresa_config['cuit']}SJ{periodo}M{nro_liq}{dias_base}{cant}"
     lineas = [reg1]
 
     for emp in empleados:
@@ -112,7 +106,7 @@ def generar_txt(empleados, periodo, nro_liquidacion="00001"):
 
     return "\r\n".join(lineas)
 
-def generar_pdf(empleados, netos, periodo):
+def generar_pdf(empleados, netos, periodo, empresa_config):
     buffer = io.BytesIO()
     W, H = A4
     c = canvas.Canvas(buffer, pagesize=A4)
@@ -147,10 +141,10 @@ def generar_pdf(empleados, netos, periodo):
 
     def recibo(emp, r, neto, y_start, copia):
         y = y_start
-        txt(ML, y, "Empresa:", bold=True); txt(ML+18*mm, y, EMPRESA)
-        txt(MR-60*mm, y, "Direccion:", bold=True); txt(MR-45*mm, y, DIRECCION)
+        txt(ML, y, "Empresa:", bold=True); txt(ML+18*mm, y, empresa_config["nombre"])
+        txt(MR-60*mm, y, "Direccion:", bold=True); txt(MR-45*mm, y, empresa_config["direccion"])
         y -= 5*mm; linea(y); y -= 4*mm
-        txt(ML, y, f"Nro C.U.I.T. Empresa:{CUIT_EMPRESA}")
+        txt(ML, y, f"Nro C.U.I.T. Empresa:{empresa_config['cuit']}")
         txt(W/2, y, f"Nro C.U.I.L. Empleado: {fmt_cuil(emp.get('cuil',''))}")
         y -= 4*mm
         txt(ML, y, "Apellido y Nombre", bold=True)
@@ -236,7 +230,7 @@ def generar_pdf(empleados, netos, periodo):
         y -= 5*mm
         txt(ML, y, f"Son: $ {fmt_monto(neto)}", 7)
         y -= 6*mm; linea(y); y -= 4*mm
-        txt(ML, y, f"Banco: {BANCO}"); txt(W/2, y, "Recibí conforme la presente")
+        txt(ML, y, f"Banco: {empresa_config['banco']}"); txt(W/2, y, "Recibí conforme la presente")
         y -= 4*mm
         txt(ML, y, f"Obra Social: {emp.get('obra_social_cod','')}"); txt(W/2, y, "liquidacion de haberes")
         y -= 4*mm; txt(ML, y, "Forma de pago:")

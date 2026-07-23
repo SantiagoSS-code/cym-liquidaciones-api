@@ -10,10 +10,11 @@ Endpoints:
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
-import os, base64, json, math, io
+import os, base64, json, math, io, re
 import httpx
 import pandas as pd
 from liquidacion import liquidar, generar_txt, generar_pdf
+from empresas import EMPRESAS, resolver_empresa_por_dominio
 
 app = FastAPI(title="CyM Liquidaciones API", version="2.0.0")
 
@@ -109,8 +110,26 @@ async def auth_callback(code: str):
         ),
     }
 
-def armar_respuesta(empleados_raw: list, periodo: str) -> dict:
+def extraer_dominio_remitente_original(cuerpo_mail: str) -> str | None:
+    """
+    Busca el patrón 'De: Nombre <email@dominio.com>' (o 'From:', con o sin
+    nombre antes del email) que los clientes de mail agregan automáticamente
+    al reenviar un mail, y devuelve el dominio del email.
+    Retorna None si no encuentra el patrón.
+    """
+    match = re.search(
+        r"(?:De|From)\s*:\s*(?:[^<\n]*<)?\s*[\w.+-]+@([\w.-]+\.\w+)\s*>?",
+        cuerpo_mail,
+        re.IGNORECASE,
+    )
+    if match:
+        return match.group(1)
+    return None
+
+def armar_respuesta(empleados_raw: list, periodo: str, empresa_id: str) -> dict:
     """Calcula liquidaciones y genera TXT+PDF. Compartido por /liquidar y /liquidar-texto-libre."""
+    empresa_config = EMPRESAS[empresa_id]
+
     resultados = []
     netos = []
     for emp in empleados_raw:
@@ -124,11 +143,13 @@ def armar_respuesta(empleados_raw: list, periodo: str) -> dict:
             "total_desc": round(r["total_desc"], 2),
         })
 
-    txt_content = generar_txt(empleados_raw, periodo)
+    txt_content = generar_txt(empleados_raw, periodo, empresa_config)
     txt_b64 = base64.b64encode(txt_content.encode()).decode()
 
-    pdf_bytes = generar_pdf(empleados_raw, netos, periodo)
+    pdf_bytes = generar_pdf(empleados_raw, netos, periodo, empresa_config)
     pdf_b64 = base64.b64encode(pdf_bytes).decode()
+
+    nombre_archivo = empresa_config["nombre"].upper().replace(" ", "_").replace(".", "").replace(",", "")
 
     return {
         "ok"        : True,
@@ -136,9 +157,9 @@ def armar_respuesta(empleados_raw: list, periodo: str) -> dict:
         "empleados" : resultados,
         "total_neto": sum(netos),
         "archivos"  : {
-            "pdf_filename": f"TV_CRECER_RECIBOS_{periodo}.pdf",
+            "pdf_filename": f"{nombre_archivo}_RECIBOS_{periodo}.pdf",
             "pdf_b64"     : pdf_b64,
-            "txt_filename": f"TV_CRECER_LSD_{periodo}.txt",
+            "txt_filename": f"{nombre_archivo}_LSD_{periodo}.txt",
             "txt_b64"     : txt_b64,
         }
     }
@@ -159,9 +180,18 @@ DEFAULTS_EMPLEADO = {
 async def liquidar_endpoint(request: Request):
     body = await request.json()
     message_id = body.get("message_id")
+    cuerpo_mail_original = body.get("cuerpo_mail_original")
 
     if not message_id:
         raise HTTPException(400, "Se requiere message_id")
+
+    dominio = extraer_dominio_remitente_original(cuerpo_mail_original) if cuerpo_mail_original else None
+    empresa_id = resolver_empresa_por_dominio(dominio) if dominio else None
+    if not empresa_id:
+        raise HTTPException(
+            400,
+            f"No se pudo identificar la empresa a partir del remitente del mail. Dominio detectado: {dominio or 'ninguno'}"
+        )
 
     access_token = await get_access_token()
     headers = {"Authorization": f"Bearer {access_token}"}
@@ -248,13 +278,8 @@ async def liquidar_endpoint(request: Request):
             obra_social_cod = str(obra_social_raw).strip() if pd.notna(obra_social_raw) else ""
 
             # TODO: el Excel de novedades no trae legajo — hasta que ese dato tenga
-            # una fuente real (padrón/CRM), se resuelve por CUIL con esta tabla fija.
-            LEGAJOS_TV_CRECER = {
-                "20186092555": "005001",
-                "20359670452": "005011",
-                "20398771940": "005013",
-            }
-            legajo = LEGAJOS_TV_CRECER.get(cuil, "")
+            # una fuente real (padrón/CRM), se resuelve por CUIL con la tabla de la empresa.
+            legajo = EMPRESAS[empresa_id]["legajos"].get(cuil, "")
 
             categoria_txt = str(row.iloc[1]) if pd.notna(row.iloc[1]) else ""
             fuera_convenio = "FUERA" in categoria_txt.upper()
@@ -283,7 +308,7 @@ async def liquidar_endpoint(request: Request):
             })
 
         # 5. Calcular liquidaciones y generar TXT + PDF
-        return JSONResponse(armar_respuesta(empleados_raw, periodo))
+        return JSONResponse(armar_respuesta(empleados_raw, periodo, empresa_id))
 
     except Exception as e:
         raise HTTPException(500, f"Error procesando Excel: {str(e)}")
@@ -299,6 +324,7 @@ async def liquidar_texto_libre(request: Request):
     Body esperado:
     {
       "periodo": "202511",
+      "cuerpo_mail_original": "...",  (opcional, usado para identificar la empresa)
       "empleados": [
         {
           "nombre": "...", "basico_mensual": 1000000,
@@ -310,9 +336,18 @@ async def liquidar_texto_libre(request: Request):
     body = await request.json()
     periodo = body.get("periodo")
     empleados_in = body.get("empleados")
+    cuerpo_mail_original = body.get("cuerpo_mail_original")
 
     if not periodo or not empleados_in:
         raise HTTPException(400, "Se requiere 'periodo' y 'empleados' (lista no vacía)")
+
+    dominio = extraer_dominio_remitente_original(cuerpo_mail_original) if cuerpo_mail_original else None
+    empresa_id = resolver_empresa_por_dominio(dominio) if dominio else None
+    if not empresa_id:
+        raise HTTPException(
+            400,
+            f"No se pudo identificar la empresa a partir del remitente del mail. Dominio detectado: {dominio or 'ninguno'}"
+        )
 
     empleados_raw = []
     for emp_in in empleados_in:
@@ -323,6 +358,6 @@ async def liquidar_texto_libre(request: Request):
         empleados_raw.append(emp)
 
     try:
-        return JSONResponse(armar_respuesta(empleados_raw, periodo))
+        return JSONResponse(armar_respuesta(empleados_raw, periodo, empresa_id))
     except Exception as e:
         raise HTTPException(500, f"Error generando liquidación desde texto libre: {str(e)}")
