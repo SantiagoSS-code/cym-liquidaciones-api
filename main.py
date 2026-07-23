@@ -14,7 +14,7 @@ import os, base64, json, math, io, re
 import httpx
 import pandas as pd
 from liquidacion import liquidar, generar_txt, generar_pdf
-from empresas import EMPRESAS, resolver_empresa_por_dominio
+from empresas import EMPRESAS, resolver_empresa
 
 app = FastAPI(title="CyM Liquidaciones API", version="2.0.0")
 
@@ -126,6 +126,14 @@ def extraer_dominio_remitente_original(cuerpo_mail: str) -> str | None:
         return match.group(1)
     return None
 
+def extraer_subject(msg: dict) -> str:
+    """Extrae el header Subject de un mensaje de Gmail (formato 'full')."""
+    headers = msg.get("payload", {}).get("headers", [])
+    for h in headers:
+        if h.get("name", "").lower() == "subject":
+            return h.get("value", "")
+    return ""
+
 def armar_respuesta(empleados_raw: list, periodo: str, empresa_id: str) -> dict:
     """Calcula liquidaciones y genera TXT+PDF. Compartido por /liquidar y /liquidar-texto-libre."""
     empresa_config = EMPRESAS[empresa_id]
@@ -185,14 +193,6 @@ async def liquidar_endpoint(request: Request):
     if not message_id:
         raise HTTPException(400, "Se requiere message_id")
 
-    dominio = extraer_dominio_remitente_original(cuerpo_mail_original) if cuerpo_mail_original else None
-    empresa_id = resolver_empresa_por_dominio(dominio) if dominio else None
-    if not empresa_id:
-        raise HTTPException(
-            400,
-            f"No se pudo identificar la empresa a partir del remitente del mail. Dominio detectado: {dominio or 'ninguno'}"
-        )
-
     access_token = await get_access_token()
     headers = {"Authorization": f"Bearer {access_token}"}
 
@@ -203,6 +203,16 @@ async def liquidar_endpoint(request: Request):
             headers=headers
         )
         msg = r.json()
+
+        # 1.5. Identificar empresa (dominio del remitente original, o alias en el asunto)
+        asunto = extraer_subject(msg)
+        dominio = extraer_dominio_remitente_original(cuerpo_mail_original) if cuerpo_mail_original else None
+        empresa_id = resolver_empresa(dominio=dominio, texto_asunto=asunto)
+        if not empresa_id:
+            raise HTTPException(
+                400,
+                f"No se pudo identificar la empresa. Dominio detectado: {dominio or 'ninguno'}. Asunto: {asunto or 'no disponible'}"
+            )
 
         # 2. Encontrar el adjunto Excel
         attachment_id = None
@@ -324,7 +334,8 @@ async def liquidar_texto_libre(request: Request):
     Body esperado:
     {
       "periodo": "202511",
-      "cuerpo_mail_original": "...",  (opcional, usado para identificar la empresa)
+      "cuerpo_mail_original": "...",  (opcional, usado para identificar la empresa por dominio)
+      "asunto": "...",  (opcional, usado para identificar la empresa por alias si falla el dominio)
       "empleados": [
         {
           "nombre": "...", "basico_mensual": 1000000,
@@ -337,16 +348,17 @@ async def liquidar_texto_libre(request: Request):
     periodo = body.get("periodo")
     empleados_in = body.get("empleados")
     cuerpo_mail_original = body.get("cuerpo_mail_original")
+    asunto = body.get("asunto")
 
     if not periodo or not empleados_in:
         raise HTTPException(400, "Se requiere 'periodo' y 'empleados' (lista no vacía)")
 
     dominio = extraer_dominio_remitente_original(cuerpo_mail_original) if cuerpo_mail_original else None
-    empresa_id = resolver_empresa_por_dominio(dominio) if dominio else None
+    empresa_id = resolver_empresa(dominio=dominio, texto_asunto=asunto)
     if not empresa_id:
         raise HTTPException(
             400,
-            f"No se pudo identificar la empresa a partir del remitente del mail. Dominio detectado: {dominio or 'ninguno'}"
+            f"No se pudo identificar la empresa. Dominio detectado: {dominio or 'ninguno'}. Asunto: {asunto or 'no disponible'}"
         )
 
     empleados_raw = []
