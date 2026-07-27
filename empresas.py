@@ -22,6 +22,34 @@ EMPRESAS = {
             # Sacado de la nomina activa a partir de agosto 2026. Pendiente confirmar
             # con el contador si ya se liquido su liquidacion final.
         },
+        "empleados": {
+            "20186092555": {
+                "nombre_canonico": "Diego Montes de Oca",
+                "legajo": "005001",
+                "categoria_afip": "999999 - SIN CATEGORIAS",
+                "categoria_display": "Fuera de convenio",
+                "convenio": "9999/99 - EXCLUIDO DE CONVENIO",
+                "fuera_convenio": True,
+                "fecha_ingreso": "2007-11-05",
+                "obra_social_cod": "000000",
+                "puesto": "1210 - DIRECTORES GENERALES Y GERENTES GENERALES DE EMPRESA",
+                "basico_mensual_actual": 2500000,
+                "basico_actualizado_al": "2026-07",
+            },
+            "20359670452": {
+                "nombre_canonico": "Agustín Sarich",
+                "legajo": "005011",
+                "categoria_afip": "004332 - AYUDANTE - PERSONAL ADMINISTRATIVO",
+                "categoria_display": "ADM B",
+                "convenio": "0130/75 - COMERCIO",
+                "fuera_convenio": False,
+                "fecha_ingreso": "2017-06-27",
+                "obra_social_cod": "126205",
+                "puesto": "4190 - OTROS OFICINISTAS",
+                "basico_mensual_actual": 1061749,
+                "basico_actualizado_al": "2025-11",
+            },
+        },
     },
     # Se agregan nuevas empresas acá con la misma estructura
 }
@@ -47,6 +75,30 @@ def resolver_empresa_por_alias(texto: str) -> str | None:
         for alias in config.get("alias", []):
             if _normalizar(alias) in texto_norm:
                 return empresa_id
+    return None
+
+def buscar_empleado_por_cuil(empresa_id: str, cuil: str) -> dict | None:
+    """Busca un empleado por CUIL exacto (sin guiones) dentro de una empresa."""
+    cuil = (cuil or "").replace("-", "").strip()
+    empresa = EMPRESAS.get(empresa_id, {})
+    return empresa.get("empleados", {}).get(cuil)
+
+def buscar_empleado_por_nombre(empresa_id: str, nombre: str) -> dict | None:
+    """Busca un empleado por coincidencia de nombre (normalizado, tolera variaciones)."""
+    nombre_norm = _normalizar(nombre)
+    empresa = EMPRESAS.get(empresa_id, {})
+    for cuil, datos in empresa.get("empleados", {}).items():
+        nombre_canonico_norm = _normalizar(datos["nombre_canonico"])
+        # Coincide si todas las palabras del nombre canonico (partidas por espacio)
+        # aparecen en el nombre buscado, o viceversa - tolera "Sarich" solo,
+        # "Agustin Sarich", "Sarich, Agustin", etc.
+        palabras_canonico = set(nombre_canonico_norm.split())
+        palabras_busqueda = set(nombre_norm.replace(",", " ").split())
+        if palabras_canonico & palabras_busqueda:  # al menos una palabra en comun
+            # Ademas exigir que el apellido (asumimos ultima palabra del nombre canonico) matchee
+            apellido = nombre_canonico_norm.split()[-1]
+            if apellido in nombre_norm:
+                return {**datos, "cuil": cuil}
     return None
 
 def resolver_empresa(dominio: str | None = None, texto_asunto: str | None = None) -> str | None:
