@@ -18,7 +18,9 @@ EMPRESAS = {
         "legajos": {
             "20186092555": "005001",
             "20359670452": "005011",
-            "20398771940": "005013",
+            # Nota: Lucas Arzeno (CUIL 20398771940, legajo 005013) fue desvinculado.
+            # Sacado de la nomina activa a partir de agosto 2026. Pendiente confirmar
+            # con el contador si ya se liquido su liquidacion final.
         },
     },
     # Se agregan nuevas empresas acá con la misma estructura
