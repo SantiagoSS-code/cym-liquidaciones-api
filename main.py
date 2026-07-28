@@ -14,7 +14,7 @@ import os, base64, json, math, io, re
 import httpx
 import pandas as pd
 from liquidacion import liquidar, generar_txt, generar_pdf
-from empresas import EMPRESAS, resolver_empresa
+from empresas import EMPRESAS, resolver_empresa, buscar_empleado_por_cuil, buscar_empleado_por_nombre
 
 app = FastAPI(title="CyM Liquidaciones API", version="2.0.0")
 
@@ -134,7 +134,7 @@ def extraer_subject(msg: dict) -> str:
             return h.get("value", "")
     return ""
 
-def armar_respuesta(empleados_raw: list, periodo: str, empresa_id: str) -> dict:
+def armar_respuesta(empleados_raw: list, periodo: str, empresa_id: str, advertencias_extra: list = None) -> dict:
     """Calcula liquidaciones y genera TXT+PDF. Compartido por /liquidar y /liquidar-texto-libre."""
     empresa_config = EMPRESAS[empresa_id]
 
@@ -160,11 +160,12 @@ def armar_respuesta(empleados_raw: list, periodo: str, empresa_id: str) -> dict:
     nombre_archivo = empresa_config["nombre"].upper().replace(" ", "_").replace(".", "").replace(",", "")
 
     return {
-        "ok"        : True,
-        "periodo"   : periodo,
-        "empleados" : resultados,
-        "total_neto": sum(netos),
-        "archivos"  : {
+        "ok"          : True,
+        "periodo"     : periodo,
+        "empleados"   : resultados,
+        "total_neto"  : sum(netos),
+        "advertencias": advertencias_extra or [],
+        "archivos"    : {
             "pdf_filename": f"{nombre_archivo}_RECIBOS_{periodo}.pdf",
             "pdf_b64"     : pdf_b64,
             "txt_filename": f"{nombre_archivo}_LSD_{periodo}.txt",
@@ -182,6 +183,62 @@ DEFAULTS_EMPLEADO = {
     "presentismo_s_acuerdo": 0, "osecac": 0, "sec": 0, "faecys": 0,
     "os_sobre_nr": False,
 }
+
+def enriquecer_empleado(empresa_id: str, emp_in: dict) -> tuple[dict, list]:
+    """
+    Busca al empleado en la base de datos de la empresa y completa campos
+    faltantes. Devuelve (empleado_enriquecido, lista_de_advertencias).
+    El valor del mail (emp_in) siempre tiene prioridad sobre la base, excepto
+    cuando el mail no trae el dato (entonces se usa el de la base).
+    """
+    advertencias = []
+    cuil_mail = str(emp_in.get("cuil", "")).replace("-", "").strip()
+
+    empleado_db = None
+    if cuil_mail:
+        empleado_db = buscar_empleado_por_cuil(empresa_id, cuil_mail)
+    if not empleado_db:
+        empleado_db = buscar_empleado_por_nombre(empresa_id, emp_in.get("nombre", ""))
+
+    if not empleado_db:
+        # No esta en la base, comportamiento actual sin cambios
+        return emp_in, advertencias
+
+    resultado = dict(emp_in)  # copia, no mutar el original
+
+    # Completar campos simples si faltan en el mail
+    campos_completar = {
+        "legajo": empleado_db.get("legajo", ""),
+        "cuil": empleado_db.get("cuil", cuil_mail),
+        "categoria": empleado_db.get("categoria_display", ""),
+        "fuera_convenio": empleado_db.get("fuera_convenio", False),
+        "obra_social_cod": empleado_db.get("obra_social_cod", ""),
+        "fecha_ingreso": empleado_db.get("fecha_ingreso", ""),
+    }
+    for campo, valor_db in campos_completar.items():
+        if not resultado.get(campo):
+            resultado[campo] = valor_db
+
+    # Logica especial de basico_mensual
+    basico_mail = resultado.get("basico_mensual", 0) or 0
+    basico_db = empleado_db.get("basico_mensual_actual", 0)
+
+    if basico_mail > 0:
+        if basico_db and basico_mail != basico_db:
+            advertencias.append(
+                f"El basico de \"{empleado_db['nombre_canonico']}\" en este mail "
+                f"(${basico_mail:,.0f}) difiere del guardado en la base "
+                f"(${basico_db:,.0f}). Verificar si hubo un aumento y actualizar "
+                f"empresas.py manualmente si corresponde."
+            )
+        # resultado["basico_mensual"] ya tiene el valor del mail, no se toca
+    else:
+        if basico_db:
+            resultado["basico_mensual"] = basico_db
+        # si no hay basico ni en el mail ni en la base, se deja en 0 -
+        # la validacion de mas abajo lo va a rechazar como corresponde
+
+    return resultado, advertencias
 
 # ─── Endpoint principal ─────────────────────────────────────
 @app.post("/liquidar")
@@ -362,14 +419,27 @@ async def liquidar_texto_libre(request: Request):
         )
 
     empleados_raw = []
+    todas_las_advertencias = []
     for emp_in in empleados_in:
-        if "nombre" not in emp_in or "basico_mensual" not in emp_in:
-            raise HTTPException(400, f"Cada empleado requiere al menos 'nombre' y 'basico_mensual': {emp_in}")
-        emp = {**DEFAULTS_EMPLEADO, **emp_in}
+        if "nombre" not in emp_in or not emp_in.get("nombre"):
+            raise HTTPException(400, f"Cada empleado requiere al menos 'nombre': {emp_in}")
+
+        emp_enriquecido, advertencias_emp = enriquecer_empleado(empresa_id, emp_in)
+        todas_las_advertencias.extend(advertencias_emp)
+
+        emp = {**DEFAULTS_EMPLEADO, **emp_enriquecido}
         emp["cuil"] = str(emp.get("cuil", "")).replace("-", "").strip()
+
+        if not emp.get("basico_mensual") or emp["basico_mensual"] <= 0:
+            raise HTTPException(
+                400,
+                f"No se pudo determinar 'basico_mensual' para \"{emp['nombre']}\": "
+                f"no vino en el mail y no esta en la base de datos de empleados."
+            )
+
         empleados_raw.append(emp)
 
     try:
-        return JSONResponse(armar_respuesta(empleados_raw, periodo, empresa_id))
+        return JSONResponse(armar_respuesta(empleados_raw, periodo, empresa_id, todas_las_advertencias))
     except Exception as e:
         raise HTTPException(500, f"Error generando liquidación desde texto libre: {str(e)}")
