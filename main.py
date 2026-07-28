@@ -13,7 +13,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 import os, base64, json, math, io, re
 import httpx
 import pandas as pd
-from liquidacion import liquidar, generar_txt, generar_pdf
+from liquidacion import liquidar, generar_txt, generar_pdf_v2
 from empresas import EMPRESAS, resolver_empresa, buscar_empleado_por_cuil, buscar_empleado_por_nombre
 
 app = FastAPI(title="CyM Liquidaciones API", version="2.0.0")
@@ -154,7 +154,14 @@ def armar_respuesta(empleados_raw: list, periodo: str, empresa_id: str, adverten
     txt_content = generar_txt(empleados_raw, periodo, empresa_config)
     txt_b64 = base64.b64encode(txt_content.encode()).decode()
 
-    pdf_bytes = generar_pdf(empleados_raw, netos, periodo, empresa_config)
+    inacap_monto = empresa_config.get("inacap_monto_mensual")
+    if inacap_monto is None:
+        raise HTTPException(
+            500,
+            f"Falta 'inacap_monto_mensual' en la configuracion de {empresa_config['nombre']}. "
+            f"Consultar el valor vigente en institutocap.org.ar/inacap/acuerdos_salariales y agregarlo a empresas.py antes de liquidar."
+        )
+    pdf_bytes = generar_pdf_v2(empleados_raw, netos, periodo, empresa_config, inacap_monto)
     pdf_b64 = base64.b64encode(pdf_bytes).decode()
 
     nombre_archivo = empresa_config["nombre"].upper().replace(" ", "_").replace(".", "").replace(",", "")

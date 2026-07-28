@@ -15,6 +15,11 @@ EMPRESAS = {
         "banco": "GALICIA",
         "dominios": ["tvcrecer.com"],  # completar con el/los dominios reales del cliente
         "alias": ["TV Crecer", "TVCrecer"],
+        "pyme": True,
+        "alicuota_art": 0.04430,
+        "alicuota_asig_familiares": 0.0470,
+        "inacap_monto_mensual": 5567.94,  # actualizar cada vez que cambie el acuerdo INACAP
+        "inacap_actualizado_al": "2026-07",  # mes/año en que se confirmo este valor por ultima vez - fuente: institutocap.org.ar/inacap/acuerdos_salariales
         "legajos": {
             "20186092555": "005001",
             "20359670452": "005011",
