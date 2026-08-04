@@ -161,7 +161,15 @@ def armar_respuesta(empleados_raw: list, periodo: str, empresa_id: str, adverten
             f"Falta 'inacap_monto_mensual' en la configuracion de {empresa_config['nombre']}. "
             f"Consultar el valor vigente en institutocap.org.ar/inacap/acuerdos_salariales y agregarlo a empresas.py antes de liquidar."
         )
-    pdf_bytes = generar_pdf_v2(empleados_raw, netos, periodo, empresa_config, inacap_monto)
+    ffep_monto = empresa_config.get("ffep_monto_mensual")
+    if ffep_monto is None:
+        raise HTTPException(
+            500,
+            f"Falta 'ffep_monto_mensual' en la configuracion de {empresa_config['nombre']}. "
+            f"Consultar el valor vigente con el contador y agregarlo a empresas.py antes de liquidar."
+        )
+    valores_mensuales = {"inacap": inacap_monto, "ffep": ffep_monto}
+    pdf_bytes = generar_pdf_v2(empleados_raw, netos, periodo, empresa_config, valores_mensuales)
     pdf_b64 = base64.b64encode(pdf_bytes).decode()
 
     nombre_archivo = empresa_config["nombre"].upper().replace(" ", "_").replace(".", "").replace(",", "")

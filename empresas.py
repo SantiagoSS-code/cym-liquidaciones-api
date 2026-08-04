@@ -20,6 +20,8 @@ EMPRESAS = {
         "alicuota_asig_familiares": 0.0470,
         "inacap_monto_mensual": 5567.94,  # actualizar cada vez que cambie el acuerdo INACAP
         "inacap_actualizado_al": "2026-07",  # mes/año en que se confirmo este valor por ultima vez - fuente: institutocap.org.ar/inacap/acuerdos_salariales
+        "ffep_monto_mensual": 1827.00,  # componente fijo del ART - actualizar cada vez que cambie
+        "ffep_actualizado_al": "2026-06",  # mes/año en que se confirmo este valor por ultima vez - fuente: el contador
         "legajos": {
             "20186092555": "005001",
             "20359670452": "005011",
